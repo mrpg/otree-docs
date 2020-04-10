@@ -9,7 +9,7 @@ administrators only.** If you don't consider yourself a sysadmin, please refer t
 other guides: :ref:`Windows <install-windows>`, :ref:`MacOS <install-macos>`,
 :ref:`Linux <install-linux>`.
 
-Note that many warnings of the ref:`Ubuntu installation guide <server-ubuntu>` apply.
+Note that many warnings of the :ref:`Ubuntu installation guide <server-ubuntu>` apply.
 Many sections about actually running the server have been omitted, such as using a
 reverse proxy. Still, they might be important; they are merely not contained here.
 
