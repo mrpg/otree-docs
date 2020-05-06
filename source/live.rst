@@ -8,15 +8,19 @@ Live pages
     These features are only available in :ref:`oTree 2.6 <v26>`,
     currently in beta.
 
-You can make pages that communicate with the server continuously
+Live pages communicate with the server continuously
 and update in real time, enabling continuous time games.
+Live pages are a great fit for games with lots of fast iteration
+and interaction between users.
+However, they require JavaScript programming and are somewhat more complex
+to implement than regular oTree pages.
 
 Sending data to the server
 --------------------------
 
 In your template's JavaScript code,
-you can call the function ``liveSend()``.
-Use it whenever you want to send code to the server.
+call the function ``liveSend()``
+whenever you want to send data to the server.
 For example, to submit a bid of 99 on behalf of the user, call:
 
 .. code-block:: javascript
@@ -46,7 +50,7 @@ On your ``Page`` class, set ``live_method`` to route the messages to that method
 Sending data to the page
 ------------------------
 
-To send data back, you should return a dictionary whose keys are the IDs of the players
+To send data back, return a dictionary whose keys are the IDs of the players
 to receive the message.
 For example, here is a method that simply sends "thanks"
 to whoever sends a message.
@@ -56,7 +60,7 @@ to whoever sends a message.
     def your_live_method(self, id_in_group, payload):
         return {id_in_group: 'thanks'}
 
-To send to multiple players, just use their ``id_in_group``.
+To send to multiple players, use their ``id_in_group``.
 For example, this forwards every message to players 2 and 3:
 
 .. code-block:: python
@@ -95,8 +99,13 @@ Example: auction
             if bid > self.highest_bid:
                 self.highest_bid = bid
                 self.highest_bidder = id_in_group
-                broadcast = dict(id_in_group=id_in_group, bid=bid)
+                broadcast = {'id_in_group': id_in_group, 'bid': bid}
                 return {0: broadcast}
+
+.. code-block:: python
+
+    class Auction(Page):
+        live_method = 'live_auction'
 
 .. code-block:: html+django
 
@@ -116,7 +125,8 @@ Example: auction
       let sendbutton = document.getElementById('sendbutton');
 
       function liveRecv(payload) {
-          history.innerHTML += '<tr><td>' + payload.id_in_group + '</td><td>' + payload.bid + '</td></tr>';
+
+          history.innerHTML += '<tr><td>' + payload['id_in_group'] + '</td><td>' + payload['bid'] + '</td></tr>';
       }
 
       sendbutton.onclick = function () {
@@ -128,7 +138,7 @@ Example: auction
 Payload
 -------
 
-The payload can be any data type (as long as it is JSON serializable).
+The payloads that you send and receive can be any data type (as long as it is JSON serializable).
 For example these are all valid:
 
 .. code-block:: javascript
@@ -151,13 +161,12 @@ Then you can use ``if`` statements to process different types of messages:
 .. code-block:: python
 
     def your_live_method(self, id_in_group, payload):
-        players = self.get_players()
         t = payload['type']
         if t == 'offer':
             other_player = payload['to']
             msg = {
+                'type': 'offer',
                 'from': id_in_group,
-                'offer': payload['offer'],
                 'value': payload['value']
             }
             return {other_player: msg}
@@ -165,7 +174,7 @@ Then you can use ``if`` statements to process different types of messages:
             # etc
             ...
 
-You don't even have to call it ``payload``;
+You can call the payload by another name;
 it just needs to be the method's last argument:
 
 .. code-block:: python
@@ -182,32 +191,8 @@ If you want to save history, you should store it in the database.
 When a player loads the page, your JavaScript can call something like ``liveSend({'type': 'connect'})``,
 and you can configure your live_method to retrieve the history of the game from the database.
 
-Here are 2 ways you can store the history in the database.
-
-LongStringField
-~~~~~~~~~~~~~~~
-
-One way is to use a ``LongStringField``:
-
-.. code-block:: python
-
-    class Group(BaseGroup):
-        history = models.LongStringField(initial='[]')
-
-        def get_history(self):
-            import json
-            return json.loads(self.history)
-
-        def set_history(self, history):
-            import json
-            self.history = json.dumps(history)
-
-Then in your live_method, you call these methods each time a message is sent.
-
-Extra model
-~~~~~~~~~~~
-
-A more powerful/flexible option is to store your data in an :ref:`extra model <aux-models>`.
+If you need to store each individual bid/message that is sent,
+you can use an :ref:`extra model <aux-models>`.
 
 Keeping users on the page
 -------------------------
@@ -224,11 +209,13 @@ When the task is completed, you send a message:
 
     class Group(BaseGroup):
         num_messages = models.IntegerField()
+        game_finished = models.BooleanField()
 
         def your_live_method(self, id_in_group, payload):
             self.num_messages += 1
             if self.num_messages >= 10:
-                msg = {'game_finished': True}
+                self.game_finished = True
+                msg = {'type': 'game_finished'}
                 return {0: msg}
 
 Then in the template, automatically submit the page via JavaScript:
@@ -237,7 +224,8 @@ Then in the template, automatically submit the page via JavaScript:
 
     function liveRecv(message) {
         console.log('received', message);
-        if (message['game_finished']) {
+        type = message['type']
+        if (type == 'game_finished') {
             document.querySelector("form").submit();
         }
         // handle other types of messages here..
@@ -245,22 +233,74 @@ Then in the template, automatically submit the page via JavaScript:
 
 For security, you should use :ref:`error_message <error_message>`:
 
-.. code-block:: javascript
+.. code-block:: python
 
     class MyPage(Page):
         live_method = 'live_method'
 
         def error_message(self, values):
-            if self.group.num_messages < 10:
+            if not self.group.game_finished:
                 return 'you need to stay until 10 messages are sent'
 
 By the way, using a similar technique, you could implement a pseudo
 wait page, e.g. one that lets you proceed after a certain timeout,
 even if not all players have arrived.
 
+.. _live-forms:
+
+Form validation
+---------------
+
+.. note::
+
+    If you have a form with multiple fields,
+    it may be simpler to use a regular page with ``form_model`` and ``form_fields``.
+    because then you have the convenience of ``{% formfields %}`` and ``error_message``,
+    etc.
+
+Let's say your live page asks players to submit bids,
+and the maximum bid is 99.
+In a non-live page you would check this using :ref:`form-validation`.
+But with live pages, you must verify it inside the ``live_method``:
+
+.. code-block:: python
+
+    def live_auction(self, id_in_group, bid):
+        if bid > 99:
+            # just an example.
+            # it's up to you to handle this message in your JavaScript code.
+            message = {'type': 'error', 'message': 'Bid is too high'}
+            return {id_in_group: message}
+        ...
+
+In addition, you can add attributes to the ``<input>`` element like ``max="99"``.
+(But note HTML code is not secure and can be modified by tech-savvy participants.)
+If you do this, you should also add ``form="liveform"``.
+This will exclude that ``<input>`` from the page's main form,
+so that when the user clicks the ``{% next_button %}``, the validation will not be triggered .
+
+So, it looks like this:
+
+.. code-block:: javascript
+
+  <input id="whatever" type="number" max="99" required form="liveform">
+
+To trigger validation when the user submits the bid, use this
+(e.g. in your ``onclick`` handler):
+
+.. code-block:: javascript
+
+    let liveform = document.getElementById('liveform');
+    let isValid = liveform.reportValidity();
+
+``reportValidity()`` is a built-in JavaScript function that will show the user
+any errors in their form fields. It also returns a boolean
+that tells if the form is currently valid. You can use that to skip the ``liveSend``.
+
 Misc notes
 ----------
 
+-   On Heroku, you need to turn on your 2nd dyno.
 -   live methods are executed in a single thread, so you don't need to worry about race conditions.
 
 Bots
@@ -282,7 +322,6 @@ For example:
         method(2, {"accepted": True})
 
 ``kwargs`` contains at least the following parameters.
-You can check them to return different data conditionally:
 
 -   ``case`` as described in :ref:`cases`.
 -   ``page_class``: the current page class, e.g. ``pages.MyPage``.
